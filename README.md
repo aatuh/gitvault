@@ -93,7 +93,10 @@ gitvault --vault ./vault doctor
 - Export refuses to write into git-tracked paths without `--allow-git` (untracked files inside a repo are allowed).
 - Export refuses to write plaintext inside the vault repo.
 
-See `docs/guardrails.md` for recommended `.gitignore` and incident response.
+## Docs
+
+- `docs/quickstart.md`
+- `docs/team-keys.md`
 
 ## Output Format
 
