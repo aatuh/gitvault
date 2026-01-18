@@ -28,6 +28,7 @@ func main() {
 		InitService:   services.InitService{Store: store, Git: gitClient, Clock: clock},
 		DoctorService: services.DoctorService{Store: store, Encrypter: sops, FS: filesystem},
 		SecretService: services.SecretService{Store: store, Encrypter: sops, Clock: clock},
+		FileService:   services.FileService{Store: store, Encrypter: sops, Clock: clock},
 		KeysService:   services.KeysService{Store: store, Encrypter: sops},
 		Listing:       services.ListingService{Store: store},
 		Sync:          services.SyncService{Git: gitClient},

@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,32 +13,6 @@ import (
 	"github.com/aatuh/gitvault/internal/infra/fs"
 	"github.com/aatuh/gitvault/internal/testutil"
 )
-
-type fakeEncrypter struct{}
-
-func (fakeEncrypter) EncryptDotenv(_ context.Context, plaintext []byte, recipients []string) ([]byte, error) {
-	if len(recipients) == 0 {
-		return nil, errors.New("no recipients")
-	}
-	encoded := base64.StdEncoding.EncodeToString(plaintext)
-	return []byte("ENC:" + encoded), nil
-}
-
-func (fakeEncrypter) DecryptDotenv(_ context.Context, ciphertext []byte) ([]byte, error) {
-	text := string(ciphertext)
-	if !strings.HasPrefix(text, "ENC:") {
-		return nil, errors.New("invalid ciphertext")
-	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(text, "ENC:"))
-	if err != nil {
-		return nil, err
-	}
-	return decoded, nil
-}
-
-func (fakeEncrypter) Version(_ context.Context) (string, error) {
-	return "fake", nil
-}
 
 func TestSecretSetAndExport(t *testing.T) {
 	root := t.TempDir()
@@ -136,6 +109,115 @@ func TestImportEnvPreferFile(t *testing.T) {
 	parsed, _ := domain.ParseDotenv(payload)
 	if parsed.Values[key] == "old" {
 		t.Fatalf("expected value updated")
+	}
+}
+
+func TestApplyEnvFileUpdatesAndPreservesComments(t *testing.T) {
+	root := t.TempDir()
+	filesystem := fs.OSFileSystem{}
+	store := VaultStore{FS: filesystem}
+	initSvc := InitService{Store: store, Clock: clock.SystemClock{}}
+	if err := initSvc.Init(context.Background(), InitOptions{Root: root, Name: "test", Recipients: []string{"test"}, InitGit: false}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	secretSvc := SecretService{Store: store, Encrypter: fakeEncrypter{}, Clock: clock.SystemClock{}}
+
+	project := randomIdentifier(t)
+	env := randomIdentifier(t)
+	key := "API_KEY"
+	value := testutil.RandomString(t, 12)
+	if err := secretSvc.Set(context.Background(), root, project, env, key, value); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	newKey := "NEW_KEY"
+	newValue := testutil.RandomString(t, 10)
+	if err := secretSvc.Set(context.Background(), root, project, env, newKey, newValue); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), ".env")
+	content := strings.Join([]string{
+		"# header",
+		key + "=old",
+		"",
+		"OTHER=keep",
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	report, err := secretSvc.ApplyEnvFile(context.Background(), root, project, env, path, ApplyOptions{})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if report.Updated == 0 || report.Added == 0 {
+		t.Fatalf("expected updates and additions")
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	output := string(updated)
+	if !strings.Contains(output, "# header") {
+		t.Fatalf("expected header preserved")
+	}
+	if !strings.Contains(output, key+"="+value) {
+		t.Fatalf("expected updated key")
+	}
+	if !strings.Contains(output, newKey+"="+newValue) {
+		t.Fatalf("expected added key")
+	}
+	if !strings.Contains(output, "OTHER=keep") {
+		t.Fatalf("expected existing key preserved")
+	}
+}
+
+func TestApplyEnvFileOnlyExisting(t *testing.T) {
+	root := t.TempDir()
+	filesystem := fs.OSFileSystem{}
+	store := VaultStore{FS: filesystem}
+	initSvc := InitService{Store: store, Clock: clock.SystemClock{}}
+	if err := initSvc.Init(context.Background(), InitOptions{Root: root, Name: "test", Recipients: []string{"test"}, InitGit: false}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	secretSvc := SecretService{Store: store, Encrypter: fakeEncrypter{}, Clock: clock.SystemClock{}}
+
+	project := randomIdentifier(t)
+	env := randomIdentifier(t)
+	key := "API_KEY"
+	value := testutil.RandomString(t, 12)
+	if err := secretSvc.Set(context.Background(), root, project, env, key, value); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	newKey := "NEW_KEY"
+	newValue := testutil.RandomString(t, 10)
+	if err := secretSvc.Set(context.Background(), root, project, env, newKey, newValue); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), ".env")
+	content := key + "=old\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	report, err := secretSvc.ApplyEnvFile(context.Background(), root, project, env, path, ApplyOptions{OnlyExisting: true})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if report.Added != 0 {
+		t.Fatalf("expected no additions")
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	output := string(updated)
+	if !strings.Contains(output, key+"="+value) {
+		t.Fatalf("expected updated key")
+	}
+	if strings.Contains(output, newKey+"="+newValue) {
+		t.Fatalf("expected new key not added")
 	}
 }
 

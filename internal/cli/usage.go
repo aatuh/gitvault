@@ -41,6 +41,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  init           Initialize a vault repository")
 	fmt.Fprintln(w, "  doctor         Verify prerequisites and key access")
 	fmt.Fprintln(w, "  secret         Manage secrets (set/unset/import/export/list/find/run)")
+	fmt.Fprintln(w, "  file           Store and retrieve binary files")
 	fmt.Fprintln(w, "  project        List projects")
 	fmt.Fprintln(w, "  env            List environments")
 	fmt.Fprintln(w, "  keys           Manage recipients")
@@ -57,6 +58,7 @@ func printSecretUsage(w io.Writer) {
 	fmt.Fprintln(w, "  unset       Remove a key")
 	fmt.Fprintln(w, "  import-env  Import dotenv file (alias: import)")
 	fmt.Fprintln(w, "  export-env  Export dotenv file (alias: export)")
+	fmt.Fprintln(w, "  apply-env   Update a dotenv file in-place (alias: apply)")
 	fmt.Fprintln(w, "  list        List keys")
 	fmt.Fprintln(w, "  find        Search keys")
 	fmt.Fprintln(w, "  run         Run a command with env injected")
@@ -93,6 +95,20 @@ func printKeysUsage(w io.Writer) {
 	fmt.Fprintln(w, "  gitvault keys rotate")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Recipients must be age public keys (start with 'age1').")
+}
+
+func printFileUsage(w io.Writer) {
+	fmt.Fprintln(w, "gitvault file <subcommand> [args]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Subcommands:")
+	fmt.Fprintln(w, "  put    Store a binary file")
+	fmt.Fprintln(w, "  get    Retrieve a binary file")
+	fmt.Fprintln(w, "  list   List stored files")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Project/env can be passed with --project/--env or as positional arguments.")
+	fmt.Fprintln(w, "Flags may appear before or after positional arguments.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Run `gitvault file <subcommand> --help` for details.")
 }
 
 func printSyncUsage(w io.Writer) {
@@ -144,10 +160,11 @@ func setSecretUnsetUsage(fs *flag.FlagSet) {
 
 func setSecretImportUsage(fs *flag.FlagSet) {
 	setUsage(fs,
-		"gitvault secret import-env [--project <name> --env <name>] [--file <path>] [--strategy <prefer-vault|prefer-file|interactive>] [<project> <env>]",
+		"gitvault secret import-env [--project <name> --env <name>] [--file <path>] [--strategy <prefer-vault|prefer-file|interactive>] [--preserve-order|--no-preserve-order] [<project> <env>]",
 		[]string{
 			"Alias: gitvault secret import",
 			"Project/env can be passed with flags or positionally.",
+			"Preserve order keeps key order from the input file.",
 		},
 		[]string{
 			"gitvault secret import-env --project myapp --env dev --file .env",
@@ -158,12 +175,13 @@ func setSecretImportUsage(fs *flag.FlagSet) {
 
 func setSecretExportUsage(fs *flag.FlagSet) {
 	setUsage(fs,
-		"gitvault secret export-env [--project <name> --env <name>] [--out <path|->] [--force] [--allow-git] [<project> <env>]",
+		"gitvault secret export-env [--project <name> --env <name>] [--out <path|->] [--force] [--allow-git] [--preserve-order|--no-preserve-order] [<project> <env>]",
 		[]string{
 			"Alias: gitvault secret export",
 			"Project/env can be passed with flags or positionally.",
 			"Use --out - to write to stdout.",
 			"Untracked files inside a git repo are allowed; tracked paths require --allow-git.",
+			"Preserve order keeps key order from the vault file.",
 		},
 		[]string{
 			"gitvault secret export-env --project myapp --env dev --out .env --force",
@@ -206,6 +224,54 @@ func setSecretRunUsage(fs *flag.FlagSet) {
 		[]string{
 			"gitvault secret run --project myapp --env dev -- ./run-server",
 			"gitvault secret run myapp dev -- ./run-server",
+		},
+	)
+}
+
+func setSecretApplyUsage(fs *flag.FlagSet) {
+	setUsage(fs,
+		"gitvault secret apply-env [--project <name> --env <name>] [--file <path>] [--only-existing] [--allow-git] [<project> <env>]",
+		[]string{
+			"Alias: gitvault secret apply",
+			"Updates a dotenv file in-place using vault secrets.",
+			"Project/env can be passed with flags or positionally.",
+		},
+		[]string{"gitvault secret apply-env --project myapp --env dev --file .env"},
+	)
+}
+
+func setFilePutUsage(fs *flag.FlagSet) {
+	setUsage(fs,
+		"gitvault file put [--project <name> --env <name>] --path <file> [--name <name>] [<project> <env>]",
+		[]string{
+			"Stores the file contents encrypted in the vault.",
+			"Project/env can be passed with flags or positionally.",
+		},
+		[]string{"gitvault file put --project myapp --env dev --path ./photo.jpg"},
+	)
+}
+
+func setFileGetUsage(fs *flag.FlagSet) {
+	setUsage(fs,
+		"gitvault file get [--project <name> --env <name>] --name <name> [--out <path|->] [--force] [--allow-git] [<project> <env> <name>]",
+		[]string{
+			"Retrieves the file and writes to --out (or stdout with -).",
+			"Project/env can be passed with flags or positionally.",
+		},
+		[]string{"gitvault file get --project myapp --env dev --name photo.jpg --out ./photo.jpg"},
+	)
+}
+
+func setFileListUsage(fs *flag.FlagSet) {
+	setUsage(fs,
+		"gitvault file list [--project <name> --env <name>] [--show-size] [--show-last-changed] [<project> <env>]",
+		[]string{
+			"Lists stored file names without decrypting contents.",
+			"Project/env can be passed with flags or positionally.",
+		},
+		[]string{
+			"gitvault file list --project myapp --env dev",
+			"gitvault file list",
 		},
 	)
 }

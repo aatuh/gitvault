@@ -17,6 +17,7 @@ const (
 	configFileName  = "config.json"
 	indexFileName   = "index.json"
 	secretsDirName  = "secrets"
+	filesDirName    = "files"
 )
 
 var ErrVaultNotFound = errors.New("vault config not found")
@@ -37,15 +38,26 @@ func (s VaultStore) SecretsDir(root string) string {
 	return filepath.Join(root, secretsDirName)
 }
 
+func (s VaultStore) FilesDir(root string) string {
+	return filepath.Join(root, filesDirName)
+}
+
 func (s VaultStore) SecretFilePath(root, project, env string) string {
 	return filepath.Join(root, secretsDirName, project, env+".env")
+}
+
+func (s VaultStore) FilePath(root, project, env, name string) string {
+	return filepath.Join(root, filesDirName, project, env, name)
 }
 
 func (s VaultStore) EnsureLayout(root string) error {
 	if err := s.FS.MkdirAll(filepath.Join(root, metadataDirName), 0755); err != nil {
 		return err
 	}
-	return s.FS.MkdirAll(s.SecretsDir(root), 0755)
+	if err := s.FS.MkdirAll(s.SecretsDir(root), 0755); err != nil {
+		return err
+	}
+	return s.FS.MkdirAll(s.FilesDir(root), 0755)
 }
 
 func (s VaultStore) LoadConfig(root string) (domain.Config, error) {

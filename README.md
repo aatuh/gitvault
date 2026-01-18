@@ -56,11 +56,24 @@ Import from a local `.env`:
 gitvault --vault ./vault secret import-env --project myapp --env dev --file .env
 ```
 
+Update a local `.env` in-place:
+
+```bash
+gitvault --vault ./vault secret apply-env --project myapp --env dev --file .env
+```
+
 Export to stdout or a file:
 
 ```bash
 gitvault --vault ./vault secret export-env --project myapp --env dev
 gitvault --vault ./vault secret export-env --project myapp --env dev --out .env --force --allow-git
+```
+
+Store and retrieve binary files:
+
+```bash
+gitvault --vault ./vault file put --project myapp --env dev --path ./photo.jpg
+gitvault --vault ./vault file get --project myapp --env dev --name photo.jpg --out ./photo.jpg --force
 ```
 
 List keys without decrypting values:
@@ -86,6 +99,7 @@ gitvault --vault ./vault doctor
 - `.gitvault/config.json`: vault config (recipients, version)
 - `.gitvault/index.json`: plaintext index (projects/envs/keys + last updated)
 - `secrets/<project>/<env>.env`: encrypted SOPS dotenv files
+- `files/<project>/<env>/<name>`: encrypted binary files
 
 ## Safe Defaults
 

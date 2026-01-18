@@ -22,6 +22,7 @@ type App struct {
 	InitService   services.InitService
 	DoctorService services.DoctorService
 	SecretService services.SecretService
+	FileService   services.FileService
 	KeysService   services.KeysService
 	Listing       services.ListingService
 	Sync          services.SyncService
@@ -113,6 +114,17 @@ func (a App) Run(ctx context.Context, args []string) int {
 			return 1
 		}
 		return a.runSync(ctx, o, root, remaining[1:])
+	case "file":
+		if len(remaining) == 1 || isHelpRequest(remaining[1:]) {
+			return a.runFile(ctx, o, "", remaining[1:])
+		}
+		root, err := a.resolveRoot(*vaultPath)
+		if err != nil {
+			o.Error(err)
+			printVaultNotFoundHint(err, a.Err)
+			return 1
+		}
+		return a.runFile(ctx, o, root, remaining[1:])
 	case "help":
 		printUsage(a.Out)
 		return 0

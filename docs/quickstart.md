@@ -46,6 +46,12 @@ gitvault --vault ./vault secret export-env myapp dev --out .env --force --allow-
 
 Note: `--allow-git` is only required for git-tracked files. Untracked files inside a git repo are allowed.
 
+Update a local `.env` in-place:
+
+```bash
+gitvault --vault ./vault secret apply-env --project myapp --env dev --file .env
+```
+
 ## 6. Doctor
 
 ```bash

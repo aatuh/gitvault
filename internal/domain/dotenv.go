@@ -114,6 +114,15 @@ func RenderDotenv(values map[string]string) []byte {
 	}
 	sort.Strings(keys)
 
+	return renderDotenvWithKeys(values, keys)
+}
+
+func RenderDotenvOrdered(values map[string]string, order []string) []byte {
+	keys := orderedKeys(values, order)
+	return renderDotenvWithKeys(values, keys)
+}
+
+func renderDotenvWithKeys(values map[string]string, keys []string) []byte {
 	var b strings.Builder
 	for _, key := range keys {
 		b.WriteString(key)
@@ -122,6 +131,33 @@ func RenderDotenv(values map[string]string) []byte {
 		b.WriteString("\n")
 	}
 	return []byte(b.String())
+}
+
+func orderedKeys(values map[string]string, order []string) []string {
+	keys := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, key := range order {
+		if _, ok := values[key]; !ok {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	if len(seen) == len(values) {
+		return keys
+	}
+	missing := make([]string, 0, len(values)-len(seen))
+	for key := range values {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		missing = append(missing, key)
+	}
+	sort.Strings(missing)
+	return append(keys, missing...)
 }
 
 func isValidEnvKey(key string) bool {

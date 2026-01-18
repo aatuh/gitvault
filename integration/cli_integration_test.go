@@ -3,6 +3,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -208,6 +209,14 @@ func TestHelpOutputs(t *testing.T) {
 	}
 	if !strings.Contains(keysHelp.Stdout, "keys add") {
 		t.Fatalf("keys help missing usage")
+	}
+
+	fileHelp := runGitvault(t, nil, "file", "--help")
+	if fileHelp.ExitCode != 0 {
+		t.Fatalf("file help failed: %s", fileHelp.Stderr)
+	}
+	if !strings.Contains(fileHelp.Stdout, "file put") {
+		t.Fatalf("file help missing usage")
 	}
 
 	syncHelp := runGitvault(t, nil, "sync", "--help")
@@ -511,6 +520,103 @@ func TestSecretRun(t *testing.T) {
 	}
 	if strings.TrimSpace(cmd.Stdout) != value {
 		t.Fatalf("expected injected env value, got %q", cmd.Stdout)
+	}
+}
+
+func TestSecretApplyEnv(t *testing.T) {
+	vaultDir := t.TempDir()
+	recipient := testRecipient(t)
+	project := randomIdentifier(t)
+	envName := randomIdentifier(t)
+
+	result := runGitvault(t, nil, "init", "--path", vaultDir, "--name", "vault", "--recipient", recipient, "--skip-git")
+	if result.ExitCode != 0 {
+		t.Fatalf("init failed: %s", result.Stderr)
+	}
+
+	key := "API_KEY"
+	value := testutil.RandomString(t, 10)
+	set := runGitvault(t, nil, "--vault", vaultDir, "secret", "set", project, envName, key, value)
+	if set.ExitCode != 0 {
+		t.Fatalf("secret set failed: %s", set.Stderr)
+	}
+	newKey := "NEW_KEY"
+	newValue := testutil.RandomString(t, 8)
+	set = runGitvault(t, nil, "--vault", vaultDir, "secret", "set", project, envName, newKey, newValue)
+	if set.ExitCode != 0 {
+		t.Fatalf("secret set failed: %s", set.Stderr)
+	}
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	content := []byte("# header\n" + key + "=old\n")
+	if err := os.WriteFile(envFile, content, 0600); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	apply := runGitvault(t, nil, "--vault", vaultDir, "secret", "apply", "--project", project, "--env", envName, "--file", envFile)
+	if apply.ExitCode != 0 {
+		t.Fatalf("secret apply failed: %s", apply.Stderr)
+	}
+	updated, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, key+"="+value) {
+		t.Fatalf("expected updated key")
+	}
+	if !strings.Contains(text, newKey+"="+newValue) {
+		t.Fatalf("expected added key")
+	}
+	if !strings.Contains(text, "# header") {
+		t.Fatalf("expected comment preserved")
+	}
+}
+
+func TestFileWorkflow(t *testing.T) {
+	vaultDir := t.TempDir()
+	recipient := testRecipient(t)
+	project := randomIdentifier(t)
+	envName := randomIdentifier(t)
+
+	result := runGitvault(t, nil, "init", "--path", vaultDir, "--name", "vault", "--recipient", recipient, "--skip-git")
+	if result.ExitCode != 0 {
+		t.Fatalf("init failed: %s", result.Stderr)
+	}
+
+	inputPath := filepath.Join(t.TempDir(), "photo.jpg")
+	data := make([]byte, 128)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatalf("rand read: %v", err)
+	}
+	if err := os.WriteFile(inputPath, data, 0600); err != nil {
+		t.Fatalf("write input file: %v", err)
+	}
+
+	put := runGitvault(t, nil, "--vault", vaultDir, "file", "put", project, envName, "--path", inputPath)
+	if put.ExitCode != 0 {
+		t.Fatalf("file put failed: %s", put.Stderr)
+	}
+
+	list := runGitvault(t, nil, "--vault", vaultDir, "file", "list", "--project", project, "--env", envName, "--show-size")
+	if list.ExitCode != 0 {
+		t.Fatalf("file list failed: %s", list.Stderr)
+	}
+	if !strings.Contains(list.Stdout, "photo.jpg") {
+		t.Fatalf("expected file listed")
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "out.jpg")
+	get := runGitvault(t, nil, "--vault", vaultDir, "file", "get", "--project", project, "--env", envName, "--name", "photo.jpg", "--out", outputPath, "--force")
+	if get.ExitCode != 0 {
+		t.Fatalf("file get failed: %s", get.Stderr)
+	}
+	outData, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	if string(outData) != string(data) {
+		t.Fatalf("expected output match")
 	}
 }
 

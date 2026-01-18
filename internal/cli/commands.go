@@ -88,6 +88,7 @@ func (a App) runInit(ctx context.Context, out ui.Output, args []string) int {
 	fmt.Fprintln(out.Out, "created:")
 	fmt.Fprintf(out.Out, "  %s\n", filepath.Join(root, ".gitvault"))
 	fmt.Fprintf(out.Out, "  %s\n", filepath.Join(root, "secrets"))
+	fmt.Fprintf(out.Out, "  %s\n", filepath.Join(root, "files"))
 	fmt.Fprintln(out.Out, "next:")
 	fmt.Fprintf(out.Out, "  gitvault --vault %s doctor\n", root)
 	fmt.Fprintf(out.Out, "  gitvault --vault %s keys add <age1...>\n", root)
@@ -150,6 +151,8 @@ func (a App) runSecret(ctx context.Context, out ui.Output, root string, args []s
 		return a.runSecretImport(ctx, out, root, args[1:])
 	case "export-env", "export":
 		return a.runSecretExport(ctx, out, root, args[1:])
+	case "apply-env", "apply":
+		return a.runSecretApply(ctx, out, root, args[1:])
 	case "list":
 		return a.runSecretList(ctx, out, root, args[1:])
 	case "find":
@@ -286,6 +289,8 @@ func (a App) runSecretImport(ctx context.Context, out ui.Output, root string, ar
 	env := fs.String("env", "", "Environment name")
 	file := fs.String("file", ".env", "Dotenv file path")
 	strategy := fs.String("strategy", string(services.MergePreferVault), "Merge strategy")
+	preserveOrder := fs.Bool("preserve-order", true, "Preserve key order from input file")
+	noPreserveOrder := fs.Bool("no-preserve-order", false, "Sort keys instead of preserving order")
 	if err := parseFlagSet(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -341,7 +346,12 @@ func (a App) runSecretImport(ctx context.Context, out ui.Output, root string, ar
 		}
 	}
 
-	report, err := a.SecretService.ImportEnv(ctx, root, *project, *env, data, services.ImportOptions{Strategy: mergeStrategy, Resolver: resolver})
+	usePreserveOrder := *preserveOrder && !*noPreserveOrder
+	report, err := a.SecretService.ImportEnv(ctx, root, *project, *env, data, services.ImportOptions{
+		Strategy:        mergeStrategy,
+		Resolver:        resolver,
+		NoPreserveOrder: !usePreserveOrder,
+	})
 	if err != nil {
 		out.Error(err)
 		printSopsHint(err, out.Err, out.JSON)
@@ -369,6 +379,8 @@ func (a App) runSecretExport(ctx context.Context, out ui.Output, root string, ar
 	outPath := fs.String("out", "-", "Output path or - for stdout")
 	force := fs.Bool("force", false, "Overwrite output file")
 	allowGit := fs.Bool("allow-git", false, "Allow writing into git-tracked paths")
+	preserveOrder := fs.Bool("preserve-order", true, "Preserve key order from vault")
+	noPreserveOrder := fs.Bool("no-preserve-order", false, "Sort keys instead of preserving order")
 	if err := parseFlagSet(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -394,7 +406,8 @@ func (a App) runSecretExport(ctx context.Context, out ui.Output, root string, ar
 		return 2
 	}
 
-	payload, err := a.SecretService.ExportEnv(ctx, root, *project, *env)
+	usePreserveOrder := *preserveOrder && !*noPreserveOrder
+	payload, err := a.SecretService.ExportEnvWithOptions(ctx, root, *project, *env, services.ExportOptions{NoPreserveOrder: !usePreserveOrder})
 	if err != nil {
 		out.Error(err)
 		printSopsHint(err, out.Err, out.JSON)
@@ -415,6 +428,67 @@ func (a App) runSecretExport(ctx context.Context, out ui.Output, root string, ar
 		return 1
 	}
 	out.Success("exported", map[string]string{"path": *outPath})
+	return 0
+}
+
+func (a App) runSecretApply(ctx context.Context, out ui.Output, root string, args []string) int {
+	fs := flag.NewFlagSet("secret apply-env", flag.ContinueOnError)
+	fs.SetOutput(out.Out)
+	setSecretApplyUsage(fs)
+	project := fs.String("project", "", "Project name")
+	env := fs.String("env", "", "Environment name")
+	file := fs.String("file", ".env", "Dotenv file path")
+	onlyExisting := fs.Bool("only-existing", false, "Only update keys already present in the file")
+	allowGit := fs.Bool("allow-git", false, "Allow updating git-tracked files")
+	if err := parseFlagSet(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	remaining, err := fillProjectEnv(project, env, fs.Args())
+	if err != nil {
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if len(remaining) > 0 {
+		out.Error(errors.New("unexpected extra arguments"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if *project == "" || *env == "" {
+		out.Error(errors.New("--project and --env are required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if strings.TrimSpace(*file) == "" {
+		out.Error(errors.New("--file is required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if _, err := os.Stat(*file); err != nil {
+		out.Error(err)
+		return 1
+	}
+	if err := a.guardUpdatePath(ctx, root, *file, *allowGit); err != nil {
+		out.Error(err)
+		return 1
+	}
+	report, err := a.SecretService.ApplyEnvFile(ctx, root, *project, *env, *file, services.ApplyOptions{OnlyExisting: *onlyExisting})
+	if err != nil {
+		out.Error(err)
+		printSopsHint(err, out.Err, out.JSON)
+		return 1
+	}
+	payload := map[string]interface{}{
+		"path":    *file,
+		"updated": report.Updated,
+		"added":   report.Added,
+	}
+	out.Success("apply complete", payload)
 	return 0
 }
 
@@ -852,6 +926,306 @@ func (a App) runSync(ctx context.Context, out ui.Output, root string, args []str
 	}
 }
 
+func (a App) runFile(ctx context.Context, out ui.Output, root string, args []string) int {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		printFileUsage(out.Out)
+		return 0
+	}
+	switch args[0] {
+	case "put":
+		return a.runFilePut(ctx, out, root, args[1:])
+	case "get":
+		return a.runFileGet(ctx, out, root, args[1:])
+	case "list":
+		return a.runFileList(ctx, out, root, args[1:])
+	default:
+		out.Error(fmt.Errorf("unknown file subcommand: %s", args[0]))
+		printFileUsage(out.Err)
+		return 2
+	}
+}
+
+func (a App) runFilePut(ctx context.Context, out ui.Output, root string, args []string) int {
+	fs := flag.NewFlagSet("file put", flag.ContinueOnError)
+	fs.SetOutput(out.Out)
+	setFilePutUsage(fs)
+	project := fs.String("project", "", "Project name")
+	env := fs.String("env", "", "Environment name")
+	path := fs.String("path", "", "Input file path")
+	name := fs.String("name", "", "File name to store (defaults to base name of --path)")
+	if err := parseFlagSet(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	remaining, err := fillProjectEnv(project, env, fs.Args())
+	if err != nil {
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if len(remaining) > 0 {
+		out.Error(errors.New("unexpected extra arguments"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if *project == "" || *env == "" {
+		out.Error(errors.New("--project and --env are required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if strings.TrimSpace(*path) == "" {
+		out.Error(errors.New("--path is required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	info, err := os.Stat(*path)
+	if err != nil {
+		out.Error(err)
+		return 1
+	}
+	if info.IsDir() {
+		out.Error(errors.New("path must be a file"))
+		return 1
+	}
+	if strings.TrimSpace(*name) == "" {
+		*name = filepath.Base(*path)
+	}
+	data, err := os.ReadFile(*path)
+	if err != nil {
+		out.Error(err)
+		return 1
+	}
+	meta, err := a.FileService.Put(ctx, root, *project, *env, *name, data)
+	if err != nil {
+		out.Error(err)
+		printSopsHint(err, out.Err, out.JSON)
+		return 1
+	}
+	payload := map[string]interface{}{
+		"project": *project,
+		"env":     *env,
+		"name":    *name,
+		"size":    meta.Size,
+		"sha256":  meta.SHA256,
+	}
+	out.Success("file stored", payload)
+	return 0
+}
+
+func (a App) runFileGet(ctx context.Context, out ui.Output, root string, args []string) int {
+	fs := flag.NewFlagSet("file get", flag.ContinueOnError)
+	fs.SetOutput(out.Out)
+	setFileGetUsage(fs)
+	project := fs.String("project", "", "Project name")
+	env := fs.String("env", "", "Environment name")
+	name := fs.String("name", "", "File name to retrieve")
+	outPath := fs.String("out", "-", "Output path or - for stdout")
+	force := fs.Bool("force", false, "Overwrite output file")
+	allowGit := fs.Bool("allow-git", false, "Allow writing into git-tracked paths")
+	if err := parseFlagSet(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	remaining, err := fillProjectEnv(project, env, fs.Args())
+	if err != nil {
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if *name == "" && len(remaining) > 0 {
+		*name = remaining[0]
+		remaining = remaining[1:]
+	}
+	if len(remaining) > 0 {
+		out.Error(errors.New("unexpected extra arguments"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if *project == "" || *env == "" {
+		out.Error(errors.New("--project and --env are required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if strings.TrimSpace(*name) == "" {
+		out.Error(errors.New("--name is required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	payload, _, err := a.FileService.Get(ctx, root, *project, *env, *name)
+	if err != nil {
+		out.Error(err)
+		printSopsHint(err, out.Err, out.JSON)
+		return 1
+	}
+	if *outPath == "-" {
+		_, _ = out.Out.Write(payload)
+		return 0
+	}
+	if err := a.guardOutputPath(ctx, root, *outPath, *allowGit, *force); err != nil {
+		out.Error(err)
+		return 1
+	}
+	if err := writeBinaryFile(*outPath, payload); err != nil {
+		out.Error(err)
+		return 1
+	}
+	out.Success("file retrieved", map[string]string{"path": *outPath})
+	return 0
+}
+
+func (a App) runFileList(ctx context.Context, out ui.Output, root string, args []string) int {
+	fs := flag.NewFlagSet("file list", flag.ContinueOnError)
+	fs.SetOutput(out.Out)
+	setFileListUsage(fs)
+	project := fs.String("project", "", "Project name")
+	env := fs.String("env", "", "Environment name")
+	showChanged := fs.Bool("show-last-changed", false, "Show last updated time")
+	showSize := fs.Bool("show-size", false, "Show file size")
+	if err := parseFlagSet(fs, args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	remaining, err := fillProjectEnv(project, env, fs.Args())
+	if err != nil {
+		out.Error(err)
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if len(remaining) > 0 {
+		out.Error(errors.New("unexpected extra arguments"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	if *project == "" && *env == "" {
+		files, err := a.Listing.ListAllFiles(root)
+		if err != nil {
+			out.Error(err)
+			return 1
+		}
+		if len(files) == 0 {
+			if out.JSON {
+				out.Table([]string{"ref"}, nil)
+			} else {
+				fmt.Fprintln(out.Out, "no files yet")
+				fmt.Fprintln(out.Out, "hint: add one with `gitvault file put <project> <env> --path <file>`")
+			}
+			return 0
+		}
+		if out.JSON {
+			rows := make([][]string, 0, len(files))
+			for _, file := range files {
+				row := []string{file.Name}
+				if *showSize {
+					row = append(row, fmt.Sprintf("%d", file.Size))
+				}
+				if *showChanged {
+					if file.LastUpdated.IsZero() {
+						row = append(row, "")
+					} else {
+						row = append(row, file.LastUpdated.Format("2006-01-02T15:04:05Z"))
+					}
+				}
+				rows = append(rows, row)
+			}
+			headers := []string{"ref"}
+			if *showSize {
+				headers = append(headers, "size")
+			}
+			if *showChanged {
+				headers = append(headers, "last_updated")
+			}
+			out.Table(headers, rows)
+			return 0
+		}
+		rows := make([][]string, 0, len(files))
+		for _, file := range files {
+			projectName, envName, fileName := splitKeyRef(file.Name)
+			row := []string{projectName, envName, fileName}
+			if *showSize {
+				row = append(row, fmt.Sprintf("%d", file.Size))
+			}
+			if *showChanged {
+				if file.LastUpdated.IsZero() {
+					row = append(row, "")
+				} else {
+					row = append(row, file.LastUpdated.Format("2006-01-02T15:04:05Z"))
+				}
+			}
+			rows = append(rows, row)
+		}
+		headers := []string{"project", "env", "file"}
+		if *showSize {
+			headers = append(headers, "size")
+		}
+		if *showChanged {
+			headers = append(headers, "last_updated")
+		}
+		out.Table(headers, rows)
+		return 0
+	}
+	if *project == "" || *env == "" {
+		out.Error(errors.New("--project and --env are required"))
+		printFlagUsage(fs, out.Err)
+		return 2
+	}
+	files, err := a.Listing.ListFiles(root, *project, *env)
+	if err != nil {
+		out.Error(err)
+		return 1
+	}
+	if len(files) == 0 {
+		if out.JSON {
+			out.Table([]string{"file"}, nil)
+		} else {
+			fmt.Fprintf(out.Out, "no files for %s/%s\n", *project, *env)
+			fmt.Fprintln(out.Out, "hint: add one with `gitvault file put <project> <env> --path <file>`")
+		}
+		return 0
+	}
+	rows := make([][]string, 0, len(files))
+	for _, file := range files {
+		row := []string{file.Name}
+		if !out.JSON {
+			row = []string{*project, *env, file.Name}
+		}
+		if *showSize {
+			row = append(row, fmt.Sprintf("%d", file.Size))
+		}
+		if *showChanged {
+			if file.LastUpdated.IsZero() {
+				row = append(row, "")
+			} else {
+				row = append(row, file.LastUpdated.Format("2006-01-02T15:04:05Z"))
+			}
+		}
+		rows = append(rows, row)
+	}
+	headers := []string{"file"}
+	if !out.JSON {
+		headers = []string{"project", "env", "file"}
+	}
+	if *showSize {
+		headers = append(headers, "size")
+	}
+	if *showChanged {
+		headers = append(headers, "last_updated")
+	}
+	out.Table(headers, rows)
+	return 0
+}
+
 func (a App) guardOutputPath(ctx context.Context, root, outPath string, allowGit bool, force bool) error {
 	absPath, err := filepath.Abs(outPath)
 	if err != nil {
@@ -890,7 +1264,45 @@ func (a App) guardOutputPath(ctx context.Context, root, outPath string, allowGit
 	return nil
 }
 
+func (a App) guardUpdatePath(ctx context.Context, root, targetPath string, allowGit bool) error {
+	absPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return err
+	}
+	if isWithinRoot(root, absPath) {
+		return errors.New("refusing to write plaintext inside the vault repository")
+	}
+	if allowGit || a.Sync.Git == nil {
+		return nil
+	}
+	repoRoot, err := a.Sync.Git.TopLevel(ctx, filepath.Dir(absPath))
+	if err != nil {
+		return nil
+	}
+	tracked, err := a.Sync.Git.IsPathTracked(ctx, repoRoot, absPath)
+	if err != nil {
+		return nil
+	}
+	if tracked {
+		return errors.New("refusing to write into git-tracked path without --allow-git")
+	}
+	return nil
+}
+
 func writeEnvFile(path string, payload []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(payload)
+	return err
+}
+
+func writeBinaryFile(path string, payload []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}

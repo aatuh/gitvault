@@ -68,6 +68,39 @@ func (s Sops) DecryptDotenv(ctx context.Context, ciphertext []byte) ([]byte, err
 	return stdout, nil
 }
 
+func (s Sops) EncryptBinary(ctx context.Context, plaintext []byte, recipients []string) ([]byte, error) {
+	if len(recipients) == 0 {
+		return nil, errors.New("no recipients provided")
+	}
+	args := []string{"--encrypt", "--input-type", "binary", "--output-type", "binary", "--age", strings.Join(recipients, ",")}
+	file, cleanup, err := s.tempFile(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	args = append(args, file)
+	stdout, stderr, err := s.Runner.Run(ctx, s.Path, args, nil, nil, "")
+	if err != nil {
+		return nil, sopsError("encrypt", err, stderr)
+	}
+	return stdout, nil
+}
+
+func (s Sops) DecryptBinary(ctx context.Context, ciphertext []byte) ([]byte, error) {
+	args := []string{"--decrypt", "--input-type", "binary", "--output-type", "binary"}
+	file, cleanup, err := s.tempFile(ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	args = append(args, file)
+	stdout, stderr, err := s.Runner.Run(ctx, s.Path, args, nil, nil, "")
+	if err != nil {
+		return nil, sopsError("decrypt", err, stderr)
+	}
+	return stdout, nil
+}
+
 func (s Sops) tempFile(data []byte) (string, func(), error) {
 	if runtime.GOOS == "windows" {
 		file, err := os.CreateTemp("", "gitvault-plaintext")
