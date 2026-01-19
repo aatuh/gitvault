@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/aatuh/gitvault/internal/services"
+	"github.com/aatuh/sealr/services"
 )
 
 func isHelpArg(arg string) bool {
@@ -107,6 +107,9 @@ func printFileUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Project/env can be passed with --project/--env or as positional arguments.")
 	fmt.Fprintln(w, "Flags may appear before or after positional arguments.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Example:")
+	fmt.Fprintln(w, "  gitvault file put --project myapp --env dev --path ./photo.jpg")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Run `gitvault file <subcommand> --help` for details.")
 }

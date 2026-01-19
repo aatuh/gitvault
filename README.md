@@ -101,6 +101,11 @@ gitvault --vault ./vault doctor
 - `secrets/<project>/<env>.env`: encrypted SOPS dotenv files
 - `files/<project>/<env>/<name>`: encrypted binary files
 
+## Library (sealr)
+
+The reusable core lives under the `sealr` package for embedding in other apps.
+See `docs/sealr.md` for examples and adapter wiring.
+
 ## Safe Defaults
 
 - Export refuses to overwrite existing files without `--force`.
@@ -111,6 +116,8 @@ gitvault --vault ./vault doctor
 
 - `docs/quickstart.md`
 - `docs/team-keys.md`
+- `docs/sealr.md`
+- `sealr/README.md`
 
 ## Output Format
 

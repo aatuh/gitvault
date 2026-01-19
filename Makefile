@@ -8,7 +8,6 @@ SOPS_AGE_KEY_FILE?=
 build:
 	mkdir -p bin
 	go build -o bin/$(BINARY) ./cmd/gitvault
-	cp README.md bin/README.md
 
 test:
 	go test ./...

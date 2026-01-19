@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aatuh/gitvault/internal/domain"
-	"github.com/aatuh/gitvault/internal/services"
 	"github.com/aatuh/gitvault/internal/ui"
+	"github.com/aatuh/sealr/domain"
+	"github.com/aatuh/sealr/services"
 )
 
 type App struct {
